@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+message SearchRequest {
+  repeated string services = 1;
+  uint32 timeoutMs = 2;
+  uint32 nTop = 3;
+  string request = 4;
+}
+
+message ServerSearchRequest {
+  string service = 1;
+  uint32 nTop = 2;
+  string request = 3;
+}
+
+message SearchResponse {
+  repeated string url = 2;
+}
