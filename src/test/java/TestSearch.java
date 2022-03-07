@@ -1,7 +1,6 @@
 import actor.SearchActor;
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
-import akka.actor.FSM;
 import akka.actor.Props;
 import akka.pattern.Patterns;
 import api.StubService;
@@ -9,18 +8,18 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import proto.Search.*;
 import scala.concurrent.Await;
-import scala.concurrent.duration.Duration;
 import scala.concurrent.duration.FiniteDuration;
 
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.IntStream;
 
 public class TestSearch {
     private static final List<String> exampleServiceNames = List.of(
-        "google", "bing", "yandex", "kgeorgiy"
+            "google", "bing", "yandex", "kgeorgiy"
     );
 
     private static Set<String> getStubResults(final List<String> serviceNames, final String request, final int nTop) {
@@ -33,36 +32,29 @@ public class TestSearch {
     }
 
     private static Set<String> doTest(final SearchRequest request) {
+        final ActorSystem actorSystem = ActorSystem.create("Search");
         try {
             final int timeout = request.getTimeoutMs();
-            final ActorSystem actorSystem = ActorSystem.create("Search");
-            final Set<String> result = new HashSet<>();
-            final ActorRef masterActor = actorSystem.actorOf(Props.create(SearchActor.class, result), "MasterActor");
+            final ActorRef masterActor = actorSystem.actorOf(Props.create(SearchActor.class), "MasterActor");
 
-            final long startTime = System.currentTimeMillis();
-            masterActor.tell(request, ActorRef.noSender());
+            FiniteDuration duration = FiniteDuration.create(2L * timeout, TimeUnit.MILLISECONDS);
+            final Object result = Await.result(Patterns.ask(masterActor, request, duration.toMillis()), duration);
 
-            FiniteDuration duration = FiniteDuration.create(1, TimeUnit.SECONDS);
-//            Await.ready(Patterns.gracefulStop(masterActor, duration), duration);
-            while (!masterActor.isTerminated()) {
-                System.err.println("wait");
-                Thread.sleep(50);
-            }
-//            Await.ready(actorSystem.whenTerminated(), Duration.Inf());
-
-            final long duration_ms = System.currentTimeMillis() - startTime;
-            System.err.println("test took " + duration_ms + "ms");
-            Assertions.assertTrue(duration_ms < 2L * timeout);
-            return result;
+            return new HashSet<>(((SearchResponse) result).getUrlList());
+        } catch (final TimeoutException tle) {
+            System.err.println("Timeout exceeded: " + tle);
+            Assertions.fail();
         } catch (final Exception e) {
-            // TODO: handle exceptions
-            return null;
+            System.err.println("Unhandled exception from test: " + e);
+            Assertions.fail();
+        } finally {
+            actorSystem.terminate();
         }
+        return null;
     }
 
     private static void testNoLatency(final String request, final int nTop, final List<String> serviceNames) {
         StubService.latencyMs = 0;
-        StubService.exception = false;
         final int timeoutMs = 100;
         final SearchRequest requestProto = SearchRequest.newBuilder()
                 .setRequest(request)
@@ -96,22 +88,7 @@ public class TestSearch {
     @Test
     public void testBadLatency() {
         StubService.latencyMs = 2000;
-        StubService.exception = false;
         final int timeoutMs = 100;
-        final SearchRequest requestProto = SearchRequest.newBuilder()
-                .setRequest("aba")
-                .setNTop(10)
-                .setTimeoutMs(timeoutMs)
-                .addAllServices(exampleServiceNames)
-                .build();
-        doTest(requestProto);
-    }
-
-    @Test
-    public void testExceptions() {
-        StubService.latencyMs = 0;
-        StubService.exception = true;
-        final int timeoutMs = 1000;
         final SearchRequest requestProto = SearchRequest.newBuilder()
                 .setRequest("aba")
                 .setNTop(10)
